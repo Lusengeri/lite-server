@@ -1,2 +1,2 @@
-slim:slim.c
-	gcc -o slim slim.c
+lite:lite.c
+	gcc -o lite lite.c
