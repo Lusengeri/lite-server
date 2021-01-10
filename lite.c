@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -7,6 +8,47 @@
 #include <string.h>
 
 #define BACKLOG 1024
+#define LINE_MAX 1024
+
+int openlistenfd(char*);
+void service_request(int);
+void process_request_headers(FILE*);
+
+int main(int argc, char *argv[])
+{
+	if (argc != 2){
+		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+		exit(1);
+	}
+
+	int connfd, listenfd;
+	struct sockaddr_storage client_addr;
+	socklen_t client_len;
+	char client_hostname[LINE_MAX], client_port[LINE_MAX];
+	listenfd = openlistenfd(argv[1]);
+		
+	if (listenfd == -1){
+		fprintf(stderr, "error in %s at %s: %s\n", __FILE__, __LINE__, strerror(errno));	
+		exit(1);
+	}	
+
+	while(1){
+		client_len = sizeof(client_addr) ;
+		
+		connfd = accept(listenfd, (struct sockaddr*) &client_addr, &client_len); 
+
+		if (connfd == -1){
+			fprintf(stderr, "error in %s at %s: %s\n", __FILE__, __LINE__, strerror(errno));	
+			exit(1);
+		}
+
+		getnameinfo((struct sockaddr*) &client_addr, client_len, client_hostname, LINE_MAX, client_port, LINE_MAX, 0);
+		printf("Connected to %s, %s\n", client_hostname, client_port);
+		service_request(connfd);
+		close(connfd);
+	}
+	exit(0);
+}
 
 int openlistenfd(char *port)
 {
@@ -45,27 +87,33 @@ int openlistenfd(char *port)
 	return listenfd;
 }
 
-int main(int argc, char *argv[])
+void service_request(int connfd)
 {
-	if (argc != 2){
-		fprintf(stderr, "usage: %s <port>\n", argv[0]);
-		exit(0);
+	char method[LINE_MAX], uri[LINE_MAX], version[LINE_MAX];	
+	FILE *conn = fdopen(connfd, "r");
+
+	if (!conn){
+		fprintf(stderr, "error in %s at %s: %s\n", __FILE__, __LINE__, strerror(errno));	
+		exit(1);
 	}
 
-	int listenfd = openlistenfd(argv[1]);	
-	struct sockaddr_storage client_addr;
-	int client_len;
-	char inp_buf[1024];
-	char client_name[1024], client_port[1024];
+	char curr_line[LINE_MAX];
 
-	while(1){
-		client_len = sizeof(struct sockaddr_storage);
-		int connfd = accept(listenfd, (struct sockaddr*) &client_addr, &client_len);
-		getnameinfo((struct sockaddr*) &client_addr, client_len, client_name, 1024, client_port, 1024, 0);
-		printf("Connected to %s, %s\n", client_name, client_port);
-		read(connfd, inp_buf, 1024);
-		printf("%s\n", inp_buf);
-		close(connfd);
+	if (fgets(curr_line, LINE_MAX, conn) != NULL){
+		sscanf(curr_line, "%s %s %s", method, uri, version);
 	}
-	exit(0);
+
+	process_request_headers(conn);
+
+	fclose(conn);
+}
+
+void process_request_headers(FILE *conn)
+{
+	char curr_line[LINE_MAX];
+
+	while (fgets(curr_line, LINE_MAX, conn) != NULL){
+		if (strcmp(curr_line, "\r\n") == 0)
+			break;
+	}	
 }
