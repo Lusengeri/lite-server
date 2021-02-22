@@ -1,2 +1,5 @@
 lite:lite.c
-	gcc -o lite lite.c
+	gcc lite.c -o lite -lssl -lcrypto
+
+clean:
+	rm *.pem lite

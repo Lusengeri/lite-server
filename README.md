@@ -1,1 +1,1 @@
-'lite-server' is a simple webserver to serve static and dynamic content.
+'lite-server' is a simple webserver whose source-code is heavily commented so as to clearly illustrate the basics of serving static and dynamic web content.
