@@ -16,6 +16,8 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#include "logging.h"
+
 #define BACKLOG 1024					// The maximum number of unserviced connection requests that may be queued
 #define MAX_LINE_LEN 1024
 
@@ -33,7 +35,9 @@ int main(int argc, char *argv[])
 {
 	/* The web-server software takes the port on which to listen for connections as the sole command line argument */
 	if (argc != 2) {
-		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+		//fprintf(stderr, "usage: %s <port>\n", argv[0]);
+		struct logger info_logger = { INFO, stdout};
+		log_message(&info_logger, "usage: %s <port>", INFO);
 		exit(EXIT_FAILURE);
 	}
 
@@ -42,7 +46,8 @@ int main(int argc, char *argv[])
 		
 	/* If creation of the listening socket fails, then the retured descriptor value is -1 in which case we terminate the program */
 	if (listen_sock == -1) {
-		fprintf(stderr, "error: Creation of listening socket failed\n");	
+		//fprintf(stderr, "error: Creation of listening socket failed\n");	
+		log_message(NULL, "error: Creation of listening socket failed", ERROR);
 		exit(EXIT_FAILURE);
 	}
 
@@ -63,7 +68,8 @@ int main(int argc, char *argv[])
 
 		/* If accept() fails (i.e. returns -1) for whatever reason we print an error message and terminate the program */
 		if (client_sock == -1) {
-			fprintf(stderr, "error: accept() failed: %s\n", strerror(errno));	
+			//fprintf(stderr, "error: accept() failed: %s\n", strerror(errno));	
+			log_message(NULL, "error: accept() failed", ERROR);
 			exit(EXIT_FAILURE);
 		}
 
@@ -76,13 +82,15 @@ int main(int argc, char *argv[])
 		/* We create an SSL context which functions as a sort of factory for creating SSL objects */
 		SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
 		if (!ctx) {
-			fprintf(stderr, "error: SSL_CTX_new() failed.\n");
+			//fprintf(stderr, "error: SSL_CTX_new() failed.\n");
+			log_message(NULL, "error: SSL_CTL_new() failed", ERROR);
 			exit(EXIT_FAILURE);
 		}
 
 		/* We set the newly created context to use our self-signed certificate */
 		if (!SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) || !SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM)) {
-			fprintf(stderr, "error: SSL_CTX_use_certificate_file() failed.\n");
+			//fprintf(stderr, "error: SSL_CTX_use_certificate_file() failed.\n");
+			log_message(NULL, "error: SSL_CTL_use_certificate_file() failed", ERROR);
 			ERR_print_errors_fp(stderr);
 			exit(EXIT_FAILURE); 
 		}
@@ -90,7 +98,8 @@ int main(int argc, char *argv[])
 		/*We then create a new SSL object*/
 		SSL *ssl = SSL_new(ctx);
 		if (!ssl) {
-			fprintf(stderr, "error: SSL_new() failed\n");
+			//fprintf(stderr, "error: SSL_new() failed\n");
+			log_message(NULL, "error: SSL_new() failed", ERROR);
 			exit(EXIT_FAILURE);
 		}
 
@@ -99,7 +108,8 @@ int main(int argc, char *argv[])
 
 		// We can now accept connections on the SSL object 
 		if (SSL_accept(ssl) <= 0) {
-			fprintf(stderr, "SSL_accept() failed.\n");
+			//fprintf(stderr, "SSL_accept() failed.\n");
+			log_message(NULL, "SSL_accept() failed", ERROR);
 			ERR_print_errors_fp(stderr);
 			exit(EXIT_FAILURE);
 		}
@@ -129,7 +139,13 @@ int get_listen_sock(char *port)
 	hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;			// Accept requests on any of available IP addresses 
 	hints.ai_flags |= AI_NUMERICSERV;				// Web service specified as a port no
 
-	getaddrinfo(NULL, port, &hints, &address_list);	
+	int gai_err;
+	if ((gai_err = getaddrinfo(NULL, port, &hints, &address_list)) != 0) {
+		char err_buf[1024];
+		sprintf(err_buf, "getaddrinfo() failed: %s", gai_strerror(gai_err));
+		log_message(NULL, err_buf, CRITICAL);
+		exit(EXIT_FAILURE);
+	}
 
 	for (p = address_list; p; p = p->ai_next) {
 		if ((listen_sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
@@ -137,7 +153,7 @@ int get_listen_sock(char *port)
 
 		// We ensure that the listening socket is reusable immediately after the program terminates 
 		setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, (const void*)&optval, sizeof(int));
-
+		
 		if ((bind(listen_sock, p->ai_addr, p->ai_addrlen)) == 0)
 			break;
 
