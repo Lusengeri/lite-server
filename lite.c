@@ -16,7 +16,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#include "logging.h"
+#include "../allog/allog.h"
 
 #define BACKLOG 1024					// The maximum number of unserviced connection requests that may be queued
 #define MAX_LINE_LEN 1024
@@ -31,90 +31,96 @@ void response_400(SSL *ssl);
 void response_404(SSL *ssl);
 const char *get_content_type(const char*);
 
+log_obj *server_logger;
+
+void init_logs(log_obj **logger)
+{
+	*logger = new_log_obj(DEBUG);
+	struct file_handler *std = new_stream_handler(stderr);
+	struct file_handler *log_file = new_file_handler("file.log");
+	struct log_handler *sys = new_syslog_handler();
+	add_handler(*logger, std);
+	add_handler(*logger, log_file);
+	add_handler(*logger, sys);
+}
+
 int main(int argc, char *argv[])
 {
-	/* The web-server software takes the port on which to listen for connections as the sole command line argument */
+	init_logs(&server_logger);
+	// The web-server software takes the port on which to listen for connections as the sole command line argument 
 	if (argc != 2) {
-		//fprintf(stderr, "usage: %s <port>\n", argv[0]);
-		struct logger info_logger = { INFO, stdout};
-		log_message(&info_logger, "usage: %s <port>", INFO);
+		log_message(server_logger, ERROR, "usage: 'lite <port>'");
 		exit(EXIT_FAILURE);
 	}
 
-	/* We then create the socket that listens on the supplied port number */
+	// We then create the socket that listens on the supplied port number 
 	int listen_sock = get_listen_sock(argv[1]);
 		
-	/* If creation of the listening socket fails, then the retured descriptor value is -1 in which case we terminate the program */
+	// If creation of the listening socket fails, then the retured descriptor value is -1 in which case we terminate the program 
 	if (listen_sock == -1) {
-		//fprintf(stderr, "error: Creation of listening socket failed\n");	
-		log_message(NULL, "error: Creation of listening socket failed", ERROR);
+		log_message(server_logger, ERROR, "error: Creation of listening socket failed");
 		exit(EXIT_FAILURE);
 	}
 
-	printf("Now listening on port: %s\n", argv[1]);
+	log_message(server_logger, INFO, "Now listening on port: %s", argv[1]);
 	
-	/* We initialize the SSL library (which implements the Transport Layer Security (TLS) protocol */
+	// We initialize the SSL library (which implements the Transport Layer Security (TLS) protocol
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
 
 	while (1) {
-		/* We create the data structure to store the address of the client connecting to the server */
+		// We create the data structure to store the address of the client connecting to the server 
 		struct sockaddr_storage client_addr;
 		socklen_t client_len = sizeof(client_addr);
 
-		/* We accept connections on our listening socket */
+		// We accept connections on our listening socket 
 		int client_sock = accept(listen_sock, (struct sockaddr*) &client_addr, &client_len); 
 
-		/* If accept() fails (i.e. returns -1) for whatever reason we print an error message and terminate the program */
+		// If accept() fails (i.e. returns -1) for whatever reason we print an error message and terminate the program 
 		if (client_sock == -1) {
-			//fprintf(stderr, "error: accept() failed: %s\n", strerror(errno));	
-			log_message(NULL, "error: accept() failed", ERROR);
+			log_message(server_logger, ERROR, "error: accept() failed");
 			exit(EXIT_FAILURE);
 		}
 
-		/* We then print the details of the client whose connection request we have accepted */
+		// We then print the details of the client whose connection request we have accepted 
 		char client_hostname[MAX_LINE_LEN], client_port[MAX_LINE_LEN];
 		getnameinfo((struct sockaddr*) &client_addr, client_len, client_hostname, MAX_LINE_LEN, client_port, MAX_LINE_LEN, 0);
-		printf("Connected to %s, %s\n", client_hostname, client_port);
+		log_message(server_logger, INFO,"Connected to %s, %s", client_hostname, client_port);
 
-		/* Once connected to a client we try to establish a secure connection before responding to any request */
-		/* We create an SSL context which functions as a sort of factory for creating SSL objects */
+		// Once connected to a client we try to establish a secure connection before responding to any request 
+		// We create an SSL context which functions as a sort of factory for creating SSL objects 
 		SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
 		if (!ctx) {
-			//fprintf(stderr, "error: SSL_CTX_new() failed.\n");
-			log_message(NULL, "error: SSL_CTL_new() failed", ERROR);
+			log_message(server_logger, ERROR, "error: SSL_CTL_new() failed");
 			exit(EXIT_FAILURE);
 		}
 
-		/* We set the newly created context to use our self-signed certificate */
+		// We set the newly created context to use our self-signed certificate 
 		if (!SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) || !SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM)) {
-			//fprintf(stderr, "error: SSL_CTX_use_certificate_file() failed.\n");
-			log_message(NULL, "error: SSL_CTL_use_certificate_file() failed", ERROR);
+			log_message(server_logger, ERROR, "SSL_CTL_use_certificate_file() failed");
 			ERR_print_errors_fp(stderr);
 			exit(EXIT_FAILURE); 
 		}
 
-		/*We then create a new SSL object*/
+		// We then create a new SSL object
 		SSL *ssl = SSL_new(ctx);
 		if (!ssl) {
-			//fprintf(stderr, "error: SSL_new() failed\n");
-			log_message(NULL, "error: SSL_new() failed", ERROR);
+			log_message(server_logger, ERROR, "error: SSL_new() failed");
 			exit(EXIT_FAILURE);
 		}
 
-		/*And then link the newly created SSL object to use the socket of the accepted connection */
+		// And then link the newly created SSL object to use the socket of the accepted connection 
 		SSL_set_fd(ssl, client_sock);
 
 		// We can now accept connections on the SSL object 
 		if (SSL_accept(ssl) <= 0) {
-			//fprintf(stderr, "SSL_accept() failed.\n");
-			log_message(NULL, "SSL_accept() failed", ERROR);
+			log_message(server_logger, ERROR, "SSL_accept() failed");
 			ERR_print_errors_fp(stderr);
 			exit(EXIT_FAILURE);
 		}
 
-		printf("Secure connection using %s\n", SSL_get_cipher(ssl));
+		log_message(server_logger, INFO, "Secure connection using %s", SSL_get_cipher(ssl));
 
 		// We then service client requests on the encrypted communication channel 
 		service_request(ssl);
@@ -141,9 +147,7 @@ int get_listen_sock(char *port)
 
 	int gai_err;
 	if ((gai_err = getaddrinfo(NULL, port, &hints, &address_list)) != 0) {
-		char err_buf[1024];
-		sprintf(err_buf, "getaddrinfo() failed: %s", gai_strerror(gai_err));
-		log_message(NULL, err_buf, CRITICAL);
+		log_message(server_logger, CRITICAL, "getaddrinfo() failed: %s", gai_strerror(gai_err));
 		exit(EXIT_FAILURE);
 	}
 
@@ -186,7 +190,6 @@ void service_request(SSL *ssl)
 		if (strcmp(uri, "/") == 0) {
 			serve_static(ssl, "sample_site/""index.html");
 		} else if (strncmp(uri, "/cgi-bin", 8) == 0) {
-			//printf("CGI script operation requested\n");	
 			serve_dynamic(ssl, uri);
 		} else {
 			char url[1024];
@@ -204,7 +207,7 @@ void serve_static(SSL *ssl, char *resource_name)
 	FILE *resource = fopen(resource_name, "r");	
 
 	if (resource == NULL) {
-		fprintf(stderr, "fopen(%s) failed\n", resource_name);
+		log_message(server_logger, ERROR, "fopen(%s) failed\n", resource_name);
 		response_404(ssl);
 		return;
 	}
@@ -250,9 +253,7 @@ void serve_dynamic(SSL *ssl, char *uri)
 {
 	char *script_name = strtok(uri, "?");
 	script_name++;
-	//printf("Script_name: %s\n", script_name);
 	char *cgi_args = strtok(NULL, "?");
-	//printf("CGI args: %s\n", cgi_args);
 	
 	char buf[4096], *empty_list[] = {NULL};
 
@@ -263,25 +264,22 @@ void serve_dynamic(SSL *ssl, char *uri)
 	SSL_write(ssl, buf, strlen(buf));
 
 	int fail = 0;
-	//printf("About to fork!\n");
 
 	int write_back = fileno(tmpfile());
 
 	if (fork() == 0) {
-		//printf("After fork\n");
 		setenv("QUERY_STRING", cgi_args, 1);
 		dup2(write_back, STDOUT_FILENO);
 		fail = execve(script_name, empty_list, environ);
 	}
 
 	if (fail == -1)
-		fprintf(stderr, "execve() failed: %s\n", strerror(errno));
+		log_message(server_logger, ERROR, "execve() failed: %s\n", strerror(errno));
 
 	int status;
 	wait(&status);
 
 	char outp_buf[4096];
-	//printf("Reading output of CGI script ...\n");
 
 	lseek(write_back, 0, SEEK_SET);
 	read(write_back, outp_buf, 4096);
